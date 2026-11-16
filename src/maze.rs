@@ -18,11 +18,3 @@ pub const MAZE: [&str; 18] = [
     "#.....#...#...#.....#",
     "#####################",
 ];
-
-pub fn width() -> u16 {
-    MAZE[0].len() as u16
-}
-
-pub fn height() -> u16 {
-    MAZE.len() as u16
-}
