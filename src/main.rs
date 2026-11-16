@@ -8,7 +8,6 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
-use rand::Rng;
 use ratatui::{
     backend::CrosstermBackend,
     buffer::Buffer,
@@ -30,11 +29,11 @@ impl Board {
     fn new() -> Self {
         let tiles: Vec<Vec<char>> = maze::MAZE.iter().map(|row| row.chars().collect()).collect();
         let pellets = tiles
-        .iter()
+            .iter()
             .flatten()
             .filter(|&&tile| tile == '.' || tile == 'o')
             .count();
-        Self {tiles, pellets}
+        Self { tiles, pellets }
     }
 
     fn width(&self) -> u16 {
@@ -57,7 +56,7 @@ impl Board {
     }
 
     fn eat(&mut self, x: i32, y: i32) -> u32 {
-        let points = match self.tile(x,y) {
+        let points = match self.tile(x, y) {
             '.' => 10,
             'o' => 50,
             _ => return 0,
@@ -123,18 +122,32 @@ struct Ghost {
 }
 
 impl Ghost {
-    fn random_step(&mut self, board: &Board) {
-        let directions = [(0, -1), (0,1), (-1, 0),(1,0)];
-        let free: Vec<(i32, i32)> = directions
-        .into_iter()
-            .filter(|&(dx, dy)| !board.is_wall(self.x + dx, self.y + dy))
-            .collect();
-        if free.is_empty(){
-            return;
+    fn chase(&mut self, pac: &Pacman, board: &Board) {
+        let dx =  pac.x - self.x;
+        let dy = pac.y - self.y;
+        let moves = if dx.abs() >= dy.abs() {
+            [
+                (dx.signum(), 0),
+                (0, dy.signum()),
+                (0, -dy.signum()),
+                (-dx.signum(), 0),
+            ]
+        } else {
+            [
+                (0, dy.signum()),
+                (dx.signum(), 0),
+                (-dx.signum(), 0),
+                (0, -dy.signum()),
+            ]
+        };
+
+        for (mx, my) in moves {
+            if (mx, my) !== (0, 0) && !board.is_wall(self.x + mx, self.y + my) {
+                self.x += mx;
+                self.y += my;
+                return;
+            }
         }
-        let (dx,dy) = free[rand::thread_rng().gen_range(0..free.len())];
-        self.x += dx;
-        self.y += dy;
     }
 }
 
@@ -160,10 +173,26 @@ fn main() -> io::Result<()> {
     let mut score = 0;
     board.eat(pac.x, pac.y);
     let mut ghosts = vec![
-        Ghost { x: 9, y: 9, color: Color::Red },
-        Ghost { x: 11, y: 9, color: Color::Magenta },
-        Ghost { x: 9, y: 10, color: Color::Cyan },
-        Ghost { x: 11, y: 10, color: Color::LightRed },
+        Ghost {
+            x: 9,
+            y: 9,
+            color: Color::Red,
+        },
+        Ghost {
+            x: 11,
+            y: 9,
+            color: Color::Magenta,
+        },
+        Ghost {
+            x: 9,
+            y: 10,
+            color: Color::Cyan,
+        },
+        Ghost {
+            x: 11,
+            y: 10,
+            color: Color::LightRed,
+        },
     ];
 
     loop {
@@ -174,7 +203,7 @@ fn main() -> io::Result<()> {
                 frame.render_widget(ghost, frame.area());
             }
             frame.render_widget(
-                Paragraph::new(format!("score {}    pellets {}", score,board.pellets)),
+                Paragraph::new(format!("score {}    pellets {}", score, board.pellets)),
                 Rect::new(OFFSET_X, board.height() + 2, 40, 1),
             );
             frame.render_widget(
@@ -195,11 +224,11 @@ fn main() -> io::Result<()> {
                     }
 
                     if matches!(
-                    key.code,
+                        key.code,
                         KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
-                ){
+                    ) {
                         for ghost in &mut ghosts {
-                            ghost.random_step(&board);
+                            ghost.chase(&pac, &board);
                         }
                     }
                 }
