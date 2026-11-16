@@ -8,8 +8,9 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
+use rand::Rng;
 use ratatui::{
-    backend::crosstermBackend,
+    backend::CrosstermBackend,
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
@@ -37,10 +38,6 @@ impl Board {
     }
 
     fn width(&self) -> u16 {
-        self.tiles[0].len() as u16
-    }
-
-    fn height(&self) -> u16 {
         self.tiles[0].len() as u16
     }
 
@@ -119,7 +116,40 @@ impl Widget for &Pacman {
     }
 }
 
-fm main() -> io::Result<()> {
+struct Ghost {
+    x: i32,
+    y: i32,
+    color: Color,
+}
+
+impl Ghost {
+    fn random_step(&mut self, board: &Board) {
+        let directions = [(0, -1), (0,1), (-1, 0),(1,0)];
+        let free: Vec<(i32, i32)> = directions
+        .into_iter()
+            .filter(|&(dx, dy)| !board.is_wall(self.x + dx, self.y + dy))
+            .collect();
+        if free.is_empty(){
+            return;
+        }
+        let (dx,dy) = free[rand::thread_rng().gen_range(0..free.len())];
+        self.x += dx;
+        self.y += dy;
+    }
+}
+
+impl Widget for &Ghost {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        buf.set_string(
+            area.x + OFFSET_X + self.x as u16,
+            area.y + OFFSET_Y + self.y as u16,
+            "M",
+            Style::default().fg(self.color),
+        );
+    }
+}
+
+fn main() -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -129,11 +159,20 @@ fm main() -> io::Result<()> {
     let mut pac = Pacman { x: 11, y: 14 };
     let mut score = 0;
     board.eat(pac.x, pac.y);
+    let mut ghosts = vec![
+        Ghost { x: 9, y: 9, color: Color::Red },
+        Ghost { x: 11, y: 9, color: Color::Magenta },
+        Ghost { x: 9, y: 10, color: Color::Cyan },
+        Ghost { x: 11, y: 10, color: Color::LightRed },
+    ];
 
     loop {
         terminal.draw(|frame| {
             frame.render_widget(&board, frame.area());
             frame.render_widget(&pac, frame.area());
+            for ghost in &ghosts {
+                frame.render_widget(ghost, frame.area());
+            }
             frame.render_widget(
                 Paragraph::new(format!("score {}    pellets {}", score,board.pellets)),
                 Rect::new(OFFSET_X, board.height() + 2, 40, 1),
@@ -153,6 +192,15 @@ fm main() -> io::Result<()> {
                         KeyCode::Down => score += pac.step(&mut board, 0, 1),
                         KeyCode::Left => score += pac.step(&mut board, 1, 0),
                         _ => {}
+                    }
+
+                    if matches!(
+                    key.code,
+                        KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right
+                ){
+                        for ghost in &mut ghosts {
+                            ghost.random_step(&board);
+                        }
                     }
                 }
             }
