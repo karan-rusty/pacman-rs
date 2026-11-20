@@ -129,17 +129,17 @@ struct Ghost {
 
 impl Ghost {
     fn chase(&mut self, pac: &Pacman, board: &Board) {
-        let dx =  pac.x - self.x;
+        let dx = pac.x - self.x;
         let dy = pac.y - self.y;
         let moves = if dx.abs() >= dy.abs() {
-            [
+[
                 (dx.signum(), 0),
                 (0, dy.signum()),
                 (0, -dy.signum()),
                 (-dx.signum(), 0),
             ]
         } else {
-            [
+[
                 (0, dy.signum()),
                 (dx.signum(), 0),
                 (-dx.signum(), 0),
@@ -148,12 +148,13 @@ impl Ghost {
         };
 
         for (mx, my) in moves {
-            if (mx, my) !== (0, 0) && !board.is_wall(self.x + mx, self.y + my) {
+            if (mx, my) != (0, 0) && !board.is_wall(self.x + mx, self.y + my) {
                 self.x += mx;
                 self.y += my;
                 return;
             }
         }
+
     }
 }
 
