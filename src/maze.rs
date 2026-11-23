@@ -18,3 +18,31 @@ pub const MAZE: [&str; 18] = [
     "#.....#...#...#.....#",
     "#####################",
 ];
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dir {
+    Up,
+    Left,
+    Down,
+    Right,
+}
+
+impl Dir {
+    pub fn delta(self) -> (i32, i32) {
+        match self {
+            Dir::Up => (0, -1),
+            Dir::Left => (-1, 0),
+            Dir::Down => (0, 1),
+            Dir::Right => (1, 0),
+        }
+    }
+
+    pub fn opposite(self) -> Dir {
+        match self {
+            Dir::Up => Dir::Down,
+            Dir::Left => Dir::Right,
+            Dir::Down => Dir::Up,
+            Dir::Right => Dir::Left,
+        }
+    }
+}

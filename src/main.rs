@@ -10,16 +10,14 @@ use crossterm::{
 
 use ratatui::{
     backend::CrosstermBackend,
-    buffer::Buffer,
     layout::{Alignment, Rect},
-    style::{Color, Style},
-    widgets::{Block, Clear, Paragraph, Widget},
+    widgets::Paragraph,
+    Frame,
     Terminal,
 };
 
-const OFFSET_X: u16 = 2;
-const OFFSET_Y: u16 = 1;
-const TICK: Duration = Duration::from_millis(130);
+use gfx::{Canvas, Rgb};
+use maze::Dir;
 
 struct Board {
     tiles: Vec<Vec<char>>,
@@ -37,16 +35,16 @@ impl Board {
         Self { tiles, pellets }
     }
 
-    fn width(&self) -> u16 {
-        self.tiles[0].len() as u16
+    fn width(&self) -> i32 {
+        self.tiles[0].len() as i32
     }
 
-    fn height(&self) -> u16 {
-        self.tiles.len() as u16
+    fn height(&self) -> i32 {
+        self.tiles.len() as i32
     }
 
     fn tile(&self, x: i32, y: i32) -> char {
-        if x < 0 || y < 0 || x >= self.width() as i32 || y >= self.height() as i32 {
+        if x < 0 || y < 0 || x >= self.width() || y >= self.height(){
             return '#';
         }
         self.tiles[y as usize][x as usize]
@@ -68,27 +66,6 @@ impl Board {
     }
 }
 
-impl Widget for &Board {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        for (y, row) in self.tiles.iter().enumerate() {
-            for (x, tile) in row.iter().enumerate() {
-                let (symbol, color) = match tile {
-                    '#' => ("█", Color::Blue),
-                    '.' => ("·", Color::Gray),
-                    'o' => ("●", Color::Yellow),
-                    _ => (" ", Color::Reset),
-                };
-                buf.set_string(
-                    area.x + OFFSET_X + x as u16,
-                    area.y + OFFSET_Y + y as u16,
-                    symbol,
-                    Style::default().fg(color),
-                );
-            }
-        }
-    }
-}
-
 struct Pacman {
     x: i32,
     y: i32,
@@ -96,61 +73,53 @@ struct Pacman {
 }
 
 impl Pacman {
-    fn turn(&mut self, dx: i32, dy: i32) {
-        self.dir = (dx, dy);
-    }
-    
-    fn step(&mut self, board: &mut Board) -> u32 {
-        if self.dir == (0,0) || board.is_wall(self.x + self.dir.0, self.y + self.dir.1) {
+    fn step(&mut self, board: &mut Board, dir: Dir) -> u32 {
+        self.facing = dir;
+        let (dx, dy) = dir.delta();
+        if board.is_wall(self.x + dx, self.y + dy) {
             return 0;
         }
-        self.x += self.dir.0;
-        self.y += self.dir.1;
+        self.x += dx;
+        self.y += dy;
+        self.steps += 1;
         board.eat(self.x, self.y)
-    }
-}
-
-impl Widget for &Pacman {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_string(
-            area.x + OFFSET_X + self.x as u16,
-            area.y + OFFSET_Y + self.y as u16,
-            "@",
-            Style::default().fg(Color::Yellow),
-        );
     }
 }
 
 struct Ghost {
     x: i32,
     y: i32,
-    color: Color,
+    color: Rgb,
+    looking: Dir,
 }
 
 impl Ghost {
+    fn new(x: i32, y: i32, color: Rgb) -> Self {
+        Self {
+            x,
+            y,
+            color,
+            looking: Dir::Left,
+        }
+    }
+
     fn chase(&mut self, pac: &Pacman, board: &Board) {
         let dx = pac.x - self.x;
         let dy = pac.y - self.y;
+        let across = if dx < 0 { Dir::Left } else { Dir::Right };
+        let down = if dy < 0 { Dir::Up } else { Dir::Down }
         let moves = if dx.abs() >= dy.abs() {
-[
-                (dx.signum(), 0),
-                (0, dy.signum()),
-                (0, -dy.signum()),
-                (-dx.signum(), 0),
-            ]
+            [across, down, down.opposite(), across.opposite()]
         } else {
-[
-                (0, dy.signum()),
-                (dx.signum(), 0),
-                (-dx.signum(), 0),
-                (0, -dy.signum()),
-            ]
+            [down, across, across.opposite(), down.opposite()]
         };
 
-        for (mx, my) in moves {
-            if (mx, my) != (0, 0) && !board.is_wall(self.x + mx, self.y + my) {
+        for dir in moves {
+            let (mx, my) = dir.delta();
+            if !board.is_wall(self.x + mx, self.y + my) {
                 self.x += mx;
                 self.y += my;
+                self.looking = dir;
                 return;
             }
         }
@@ -158,14 +127,91 @@ impl Ghost {
     }
 }
 
-impl Widget for &Ghost {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_string(
-            area.x + OFFSET_X + self.x as u16,
-            area.y + OFFSET_Y + self.y as u16,
-            "M",
-            Style::default().fg(self.color),
+struct Scene {
+    tile: i32,
+    walls: Canvas,
+    canvas: Canvas,
+}
+
+impl Scene {
+    fn new() -> Self {
+        Self {
+            tile: 0,
+            walls: Canvas::new(0, 0),
+            canvas: Canvas::new(0, 0),
+        }
+    }
+
+    fn draw(
+        &mut self,
+        frame: &mut Frame,
+        board: &Board,
+        pac: &Pacman,
+        ghosts: &[Ghost],
+        tick: u64,
+        score: u32,
+    ) {
+        let area = frame.area();
+        // biggest tile that fits. a cell is one pixel wide and two tall
+        let t = (2..=8)
+        .rev()
+            .find(|&t| {
+                board.width() * t <= area.width as i32
+                && (board.height() * t + 1) / 2 + 2 <= area.height as i32
+            })
+                .unwrap_or(2);
+
+        if t != self.tile {
+            self.tile = t;
+            self.walls = Canvas::new(board.width() * t, board.height() * t);
+            gfx::draw_walls(
+                &mut self.walls,
+                board.width(),
+                board.height(),
+                t,
+                |x, y| board.is_wall(x, y),
+                gfx::WALL,
+                gfx::WALL_FILL
+            );
+            self.canvas = Canvas::new(board.width() * t, board.height() * t);
+        }
+        let c = &mut self.canvas;
+        c.copy_from(&self.walls);
+        for (y, row) in board.tiles.iter().enumerate() {
+            for (x, tile) in row.iter().enumerate() {
+                match tile {
+                    '.' => gfx::draw_dot(c, x as i32, y as i32, t),
+                    'o' => gfx::draw_power(c, x as i32, y as i32, t),
+                    _ => {}
+                }
+            }
+        }
+
+        let center = |tile: i32| (tile * t) as f32 + t as f32 / 2.0;
+        let r = t as f32 * 0.8;
+        let mouth = if pac.steps.is_multiple_of(2) { 0.05 } else { 0.22 };
+        gfx::draw_pacman(c, centre(pac.x), centre(pac.y), r, pac.facing, mouth);
+        for ghost in ghosts{
+            gfx::draw_ghost(
+                c,
+                center(ghost.x),
+                center(ghost.y),
+                r,
+                ghost.color,
+                ghost.looking,
+                tick,
+            );
+        }
+
+        let rows = ((board.height() * t + 1) / 2) as u16;
+        let board_area = Rect::new(area.x, area.y, (board.width() * t) as u16, rows).intersection(area);
+        frame.render_widget(&self.canvas, board_area);
+        let below = |line: u16| Rect::new(area.x, area.y + rows + line, area.width, 1).intersection(area);
+        frame.render_widget(
+            Paragraph::new(format!("score {}    pellets {}", score, board.pellets)),
+            below(0),
         );
+        frame.render_widget(Paragraph::new("arrows: move    q: quit"), below(1));
     }
 }
 
@@ -198,67 +244,43 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     let mut board = Board::new();
-    let mut pac = spawn_pacman();
-    let mut score = 0;
-    let mut lives = 3;
-    let mut over = false;
+    let mut pac = Pacman {
+        x: 11,
+        y: 14,
+        facing: Dir::Left,
+        steps: 0,
+    };
     board.eat(pac.x, pac.y);
-    let mut ghosts = spawn_ghosts();
-    let mut last_tick = Instant::now();
+    let mut ghosts = vec![
+        Ghost::new(9, 9, gfx::GHOSTS[0]),
+        Ghost::new(11, 9, gfx::GHOSTS[1]),
+        Ghost::new(9, 10, gfx::GHOSTS[2]),
+        Ghost::new(11, 10, gfx::GHOSTS[3]),
+    ];
+
+    let mut scene = Scene::new();
+    let mut tick = 0;
+    let mut score = 0;
 
     loop {
-        terminal.draw(|frame| {
-            frame.render_widget(&board, frame.area());
-            if !over {
-                frame.render_widget(&pac, frame.area());
-            }
-            for ghost in &ghosts {
-                frame.render_widget(ghost, frame.area());
-            }
-            frame.render_widget(
-                Paragraph::new(format!("score {}   pellets {}   lives {}",
-                    score, board.pellets, lives
-                ))
-                    Rect::new(OFFSET_X, board.height() + 2, 60, 1),
-            );
-            frame.render_widget(
-                Paragraph::new("arrows: turn     q: quit"),
-                Rect::new(OFFSET_X, board.height() + 3, 40, 1),
-            );
 
-            if over {
-                let popup = centered(frame.area(), 34, 5);
-                frame.render_widget(Clear, popup);
-                frame.render_widget(
-                    Paragraph::new(format!("GAME OVER    score {}\n\nr: restart     q: quit", score))
-                    .block(Block::bordered())
-                        .alignment(Alignment::Center),
-                    popup,
-                );
-            }
-        })?;
+        tick += 1;
+        terminal.draw(|frame| scene.draw(frame, &board, &pac, &ghosts, tick, score))?;
 
-        let timeout = TICK.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout)? {
+        if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
+                    let dir = match key.code {
                         KeyCode::Char('q') => break,
-                        KeyCode::Char('r') if over => {
-                            board = Board::new();
-                            pac = spawn_pacman();
-                            ghosts = spawn_ghosts();
-                            score = 0;
-                            lives = 3;
-                            over = false;
-                            board.eat(pac.x, pac.y);
-                        }
-                        KeyCode::Up => pac.turn(0, -1),
-                        KeyCode::Down => pac.turn(0, 1),
-                        KeyCode::Left => pac.turn(-1, 0),
-                        KeyCode::Right => pac.turn(1, 0),
-                        _ => {}
-                        }
+                        KeyCode::Up => Dir::Up,
+                        KeyCode::Down => Dir::Down,
+                        KeyCode::Left => Dir::Left,
+                        KeyCode::Right = > Dir::Right,
+_ => continue,
+                    };
+                    score += pac.step(&mut board, dir);
+                    for ghost in &mut ghosts {
+                        ghost.chase(&pac, &board);
                     }
                 }
             }
