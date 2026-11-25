@@ -170,13 +170,8 @@ pub fn draw_walls(
             if (!up || !down) && (!left || !right) {
                 continue;
             }
-            c.set(x, y,
-                if up && down && left && right {
-                    fill
-                } else {
-                    edge
-                };
-            );
+            let inner = (-1..=1).all(|dy| (-1..=1).all(|dx| at(x + dx, y + dy)));
+            c.set(x, y, if inner { fill } else { edge });
         }
     }
 }
@@ -210,7 +205,11 @@ pub fn draw_pacman(c: &mut Canvas, cx: f32, cy: f32, r: f32, facing: Dir, mouth:
 }
 
 pub fn draw_ghost(c: &mut Canvas, cx: f32, cy: f32, r: f32, body: Rgb, facing: Dir, frame: u64){
-    let shift = if (frame / 0).is_multiple_of(2) { 0.0 } else { 0.5 };
+    let shift = if (frame / 8).is_multiple_of(2) {
+        0.0
+    } else {
+            0.5
+        };
     c.fill_shape(cx, cy, r, body, |dx, dy| ghost_body(dx, dy, r, shift));
     draw_eyes(c, cy, r, facing);
 }
