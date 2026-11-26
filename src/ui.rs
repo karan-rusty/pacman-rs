@@ -77,6 +77,13 @@ impl Renderer {
             gfx::Wall,
             gfx::WALL_FILL,
         );
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                if maze.get(x, y) == Tile::Door {
+                    gfx::draw_door(&mut self.walls, x, y, t);
+                }
+            }
+        }
         self.canvas = Canvas::new(WIDTH * t, HEIGHT * t);
     }
 
@@ -98,11 +105,15 @@ impl Renderer {
         let r = t as f32 * 0.8;
         let pac = &game.pac;
         let (x, y) = to_pixels(pac.pos, t);
-        gfx::draw_pacman(c, x, y, r, pac.dir, pac.mouth() * 0.22);,
+        for x in wrapped(x, t) {
+            gfx::draw_ghost(c, x, y, r, pac.dir, pac.mouth() * 0.22);
+        }
 
         for (ghost, color) in game.ghosts.iter().zip(gfx::GHOSTS) {
             let (x, y) = to_pixels(ghost.pos, t);
-            gfx::draw_ghost(c, x, y, r, color, ghost.dir, game.frame);
+            for x in wrapped(x, t) {
+                gfx::draw_ghost(c, x, y, r, color, ghost.dir, game.frame);
+            }
         }
     }
 }
@@ -119,4 +130,12 @@ fn to_pixels(pos: Pos, t: i32) -> (f32, f32) {
     let scale = t as f32 / SUB as f32;
     let half = t as f32 / 2.0;
     (pos.x as f32 * scale + half, pos.y as f32 * scale + half)
+}
+
+fn wrapped(x: f32, t: i32) -> impl Iterator<Item = f32> {
+    let span = (WIDTH * t) as f32;
+    let margin = t as f32;
+    [x, x - span, x + span]
+        .into_iter()
+        .filter(move |&x| x > -margin && x < span + margin)
 }

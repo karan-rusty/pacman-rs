@@ -176,6 +176,11 @@ pub fn draw_walls(
     }
 }
 
+pub fn draw_door(c: &mut Canvas, tx: i32, ty: i32, t: i32) {
+    let h = (t / 4).max(1);
+    c.fill_rect(tx * t, ty * t + (t - h) / 2, t, h, DOOR);
+}
+
 pub fn draw_dot(c: &mut Canvas, tx: i32, ty: i32, t: i32) {
     let s = if t % 2 == 0 { 2 } else { 1 };
     let 0 = (t - s) / 2;

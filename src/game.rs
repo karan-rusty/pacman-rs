@@ -1,11 +1,13 @@
-use crate::maze::{Dir, Maze, Tile, PAC_START};
+use crate::maze::{Dir, Maze, Tile, HOUSE_EXIT, HOUSE_ROW, PAC_START, WIDTH};
 
 pub const FPS: u32 = 60;
 
 pub const SUB: i32 = 16;
 
 const BASE_SPEED: f32 = 9.0;
-const GHOST_STARTS: [(i32, i32); 4] = [(9, 9), (11, 9), (9, 10), (11, 10)];
+const RELEASE_DOTS: [u32; 4] = [0, 0, 15, 35];
+const IDLE_RELEASE: u32 = 4 * FPS;
+const RELEASE_GAP: u32 = FPS / 2;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pos {
@@ -23,7 +25,7 @@ impl Pos {
 
     pub fn tile(self) -> (i32, i32) {
         (
-            (self.x + SUB / 2).div_euclid(SUB),
+            (self.x + SUB / 2).div_euclid(SUB).rem_euclid(WIDTH),
             (self.y + SUB / 2).div_euclid(SUB),
         )
     }
@@ -34,7 +36,7 @@ impl Pos {
 
     fn step(&mut self, dir: Dir) {
         let (dx, dy) = dir.delta();
-        self.x += dx;
+        self.x = (self.x + dx).rem_euclid(WIDTH * SUB);
         self.y += dy;
     }
 }
@@ -106,29 +108,91 @@ impl Pacman {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GhostState {
+    /// waiting in the house, bobbing up and down
+    House,
+    /// on the way out through the door
+    Leaving,
+    /// out in the maze
+    Active,
+}
+
 pub struct Ghost {
     pub pos: Pos,
     pub dir: Dir,
+    pub state: GhostState,
     budget: f32,
 }
 
 impl Ghost {
     fn new(index: usize) -> Self {
-        let (x, y) = GHOST_STARTS[index];
+        let (exit_x, exit_y) = HOUSE_EXIT;
+        let home_x = match index {
+            2 => exit_x - 2,
+            3 => exit_x + 2,
+            _ => exit_x,
+        };
+        let home = Pos::tile_centre(home_x, HOUSE_ROW);
+        let (pos, state) = if index == 0 {
+            (Pos::tile_centre(exit_x, exit_y), GhostState::Active)
+        } else {
+            (home, GhostState::House)
+        };
         Self {
-            pos: Pos::tile_centre(x, y),
-            dir: Dir::Left,
+            pos,
+            dir: if index == 2 { Dir::Up } else { Dir::Down },
+            state,
             budget: 0.0,
         }
     }
 
     fn update(&mut self, maze: &Maze, target: (i32, i32), speed: f32) {
         for _ in 0..steps(&mut self.budget, speed) {
-            if self.pos.centred() {
-                self.dir = self.pick(maze, target);
-            }
-            self.pos.step(self.dir);
+            self.step(maze, target);
         }
+    }
+
+    fn step(&mut self, maze: &Maze, target: (i32, i32)) {
+        let door_x = HOUSE_EXIT.0 * SUB;
+        let exit_y = HOUSE_EXIT.1 * SUB;
+        let house_y = HOUSE_ROW * SUB;
+        match self.state {
+            GhostState::House => {
+                if self.pos.y <= house_y - SUB / 4 {
+                    self.dir = Dir::Down;
+                } else if self.pos.y >= house_y + SUB / 4 {
+                    self.dir = Dir::Up;
+                }
+            }
+            GhostState::Leaving => {
+                // back to the middle row, across to the door, then straight up
+                if self.pos.x != door_x {
+                    self.dir = if self.pos.y < house_y {
+                        Dir::Down
+                    } else if self.pos.y > house_y {
+                            Dir::Up
+                        } else if self.pos.x < door_x {
+                            Dir::Right
+                        } else {
+                            Dir::Left
+                        };
+                } else if self.pos.y > exit_y {
+                    self.dir = Dir::Up;
+                } else {
+                    self.state = GhostState::Active;
+                    self.dir = Dir::Left;
+                    return;
+                }
+            }
+            GhostState::Active => {
+                if self.pos.centred() {
+                    self.dir = self.pick(maze, target);
+                }
+            }
+        }
+        self.pos.step(self.dir);
+    }
     }
 
     /// at every tile take the open way, other than straight back, that ends up
@@ -157,6 +221,9 @@ pub struct Game {
     pub score: u32,
     /// counts every update, for animations
     pub frame: u64,
+    dots_eaten: u32,
+    idle: u32,
+    release_wait: u32,
 }
 
 impl Game {
@@ -167,6 +234,9 @@ impl Game {
             ghosts: std::array::from_fn(Ghost::new),
             score: 0,
             frame: 0,
+            dots_eaten: 0,
+            idle: 0,
+            release_wait: 0,
         };
         game.eat();
         game
@@ -180,18 +250,50 @@ impl Game {
         self.frame += 1;
         self.pac.update(&self.maze, BASE_SPEED * 0.8);
         self.eat();
+        self.release();
         let target = self.pac.pos.tile();
         for ghost in &mut self.ghosts {
-            ghost.update(&self.maze, target, BASE_SPEED * 0.75);
+            let (x, y) = ghost.pos.tile();
+            let speed = match ghost.state {
+                GhostState::House | GhostState::Leaving => 0.5,
+                GhostState::Active if Maze::is_tunnel(x, y) => 0.4,
+                GhostState::Active => 0.75,
+            };
+            ghost.update(&self.maze, target, BASE_SPEED * speed);
         }
     }
 
     fn eat(&mut self) {
         let (x, y) = self.pac.pos.tile();
-        match self.maze.eat(x, y) {
-            Tile::Dot => self.score += 10,
-            Tile::Power => self.score += 50,
-            _ => {}
+        let points = match self.maze.eat(x, y) {
+            Tile::Dot => 10,
+            Tile::Power => 50,
+            _ => {
+                self.idle += 1;
+                return;
+            }
+        };
+        self.score += points;
+        self.dots_eaten += 1;
+        self.idle = 0;
+    }
+
+    fn release(&mut self) {
+        if self.release_wait > 0 {
+            self.release_wait -= 1;
+            return;
+        }
+        let Some(i) = self
+        .ghosts
+        .iter()
+            .position(|g| g.state == GhostState::House)
+            else {
+            return;
+        };
+        if self.dots_eaten >= RELEASE_DOTS[i] || self.idle >= IDLE_RELEASE {
+            self.ghosts[i].state = GhostState::Leaving;
+            self.idle = 0;
+            self.release_wait = RELEASE_GAP;
         }
     }
 }
