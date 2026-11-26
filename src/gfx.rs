@@ -161,6 +161,42 @@ pub fn draw_walls(
     }
 
     let at = |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h && solid[(y * w + x) as usize];
+
+    let mut inner = vec![false; (w * h) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            inner[(y * w + x) as usize] = (-1..=1).all(|dy| (-1..=1).all(|dx| at(x + dx, y + dy)));
+        }
+    }
+    let mut filled = vec![false; (w * h) as usize];
+    let mut seen = vec![false; (w * h) as usize];
+    for start in 0..(w * h) as usize {
+        if !inner[start] || seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        let mut blob = vec![start];
+        let mut next = 0;
+        while next < blob.len() {
+            let (x, y) = (blob[next] as i32 % w, blob[next] as i32 / w);
+            next += 1;
+            for (nx, ny) in [(x - 1, y), (x, y - 1), (x, y + 1)] {
+                if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                    continue;
+                }
+                let i = (ny * w + nx) as usize;
+                if inner[i] && !seen[i] {
+                    seen[i] = true;
+                    blob.push(i);
+                }
+            }
+        }
+        if bob.len() as i32 >= 2 * t {
+            for i in blob {
+                filled[i] = true;
+            }
+        }
+    }
     for y in 0..h {
         for x in 0..w {
             if !at(x, y) {
@@ -170,8 +206,8 @@ pub fn draw_walls(
             if (!up || !down) && (!left || !right) {
                 continue;
             }
-            let inner = (-1..=1).all(|dy| (-1..=1).all(|dx| at(x + dx, y + dy)));
-            c.set(x, y, if inner { fill } else { edge });
+            let filled = filled[(y * w + x) as usize];
+            c.set(x, y, if filled { fill } else { edge });
         }
     }
 }
