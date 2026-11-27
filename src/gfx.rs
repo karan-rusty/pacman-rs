@@ -20,6 +20,14 @@ pub const DOT: Rgb = Rgb(255, 184, 151);
 pub const PACMAN: Rgb = Rgb(255, 255, 0);
 pub const EYE_WHITE: Rgb = Rgb(222, 222, 255);
 pub const PUPIL: Rgb = Rgb(33, 33, 255);
+pub const SCARED: Rgb = Rgb(33, 33, 255);
+pub const SCARED_FACE: Rgb = Rgb(255, 184, 151);
+pub const FLASH: Rgb = Rgb(222, 222, 255);
+pub const FLASH_FACE: Rgb = Rgb(255, 0, 0);
+pub const WALL_FLASH: Rgb = Rgb(222, 222, 255);
+pub const WALL_FLASH_FILL: Rgb = Rgb(70, 70, 110);
+pub const CHERRY: Rgb = Rgb(255, 0, 0);
+pub const STEM: Rgb = Rgb(222, 151, 81);
 pub const GHOSTS: [Rgb; 4] = [
     Rgb(255, 0, 0),
     Rgb(255, 184, 255),
@@ -90,6 +98,15 @@ impl Canvas {
 
     pub fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: Rgb) {
         self.fill_shape(cx, cy, r, color, |dx, dy| dx * dy <= r * r);
+    }
+
+    pub fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: Rgb) {
+        let n = (x1 - x0).abs().maz((y1 - y0).abs()).ceil().max(1.0) as i32;
+        for i in 0..=n {
+            let k = i as f32 / n as f32;
+            let (x, y) = (x0 + (x1 - x0) * k, y0 + (y1 - y0) * k);
+            self.set(x.floor() as i32, y.floor() as i32, color);
+        }
     }
 
     pub fn fill_ellipse(&mut self, cx: f32, cy: f32, ry: f32, color: Rgb) {
@@ -245,14 +262,45 @@ pub fn draw_pacman(c: &mut Canvas, cx: f32, cy: f32, r: f32, facing: Dir, mouth:
     });
 }
 
-pub fn draw_ghost(c: &mut Canvas, cx: f32, cy: f32, r: f32, body: Rgb, facing: Dir, frame: u64){
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GhostLook {
+    Body(Rgb),
+    Scared {
+        flash: bool,
+    },
+    Eyes,
+}
+
+pub fn draw_ghost(
+    c: &mut Canvas,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    look: GhostLook,
+    facing: Dir,
+    frame: u64,
+){
     let shift = if (frame / 8).is_multiple_of(2) {
         0.0
     } else {
             0.5
         };
-    c.fill_shape(cx, cy, r, body, |dx, dy| ghost_body(dx, dy, r, shift));
-    draw_eyes(c, cy, r, facing);
+    let body = |dx, dy| ghost_body(dx, dy, r, shift);
+    match look {
+    c.fill_shape(cx, cy, r, color, body);
+    draw_eyes(c, cx, cy, r, facing);
+    }
+    GhostLook::Scared { flash } => {
+        let (color, face) = if flash {
+(FLASH, FLASH_FACE)
+        } else {
+(SCARED, SCARED_FACE)
+        };
+        c.fill_shape(cx, cy, r, color, body);
+        draw_scared_face(c, cx, cy, r, face);
+    }
+    GhostLook::Eyes => draw_eyes(c, cx, cy, r, facing),
+}
 }
 
 fn ghost_body(dx: f32, dy: f32, r: f32, shift: f32) -> bool {
@@ -290,4 +338,33 @@ fn draw_eyes(c: &mut Canvas, cx: f32, cy: f32, r: f32, facing: Dir) {
             );
         }
     }
+}
+
+/// two dot eyes and a wobbly mouth
+fn draw_scared_face(c: &mut Canvas, cx: f32, cy: f32, r: f32, face: Rgb) {
+    for side in [-1.0, 1.0] {
+        c.fill_ellipse(
+            cx + side * r * 0.38,
+            cy - r * 0.25,
+            r * 0.14,
+            r * 0.14,
+            face,
+        );
+    }
+    let mouth_y = (cy + r * 0.3).floor() as i32;
+    let (x0, x1) = (
+    (cx - r * 0.65).round() as i32,
+    (cx + r * 0.65).round() as i32,
+);
+    for x in x0..x1 {
+        c.set(x, mouth_y - (x & 1), face);
+    }
+}
+
+pub fn draw_cherry(c: &mut Canvas, cx: f32, cy: f32, t: f32) {
+    let top = (cx + t * 0.3, cy - t * 0.6);
+    c.draw_line(cx - t * 0.3, cy + t * 0.1, top.0, top.1, STEM);
+    c.draw_line(cx - t * 0.3, cy + t * 0.1, top.0, top.1, STEM);
+    c.fill_circle(cx - t * 0.3, cy + t * 0.3, t * 0.3, CHERRY);
+    c.fill_circle(cx + t * 0.3, cy + t * 0.4, t * 0.3, CHERRY);
 }

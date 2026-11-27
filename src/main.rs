@@ -10,7 +10,7 @@ use std::{
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::DefaultTerminal;
 
-use game::{Game, FPS};
+use game::{Game, Phase, FPS};
 use maze::Dir;
 
 fn main() -> io::Result<()> {
@@ -52,6 +52,9 @@ loop {
             KeyCode::Up => game.steer(Dir::Up),
             KeyCode::Down => game.steer(Dir::Down),
             KeyCode::Right => game.steer(Dir::Right),
+        KeyCode::Enter | KeyCode::Char('r') if game.phase == Phase::GameOver => {
+            game = Game::new();
+        }
             _ => {}
         }
         }

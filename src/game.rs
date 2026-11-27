@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::maze::{Dir, Maze, Tile, HOUSE_EXIT, HOUSE_ROW, PAC_START, WIDTH};
 
 pub const FPS: u32 = 60;
@@ -8,6 +10,15 @@ const BASE_SPEED: f32 = 9.0;
 const RELEASE_DOTS: [u32; 4] = [0, 0, 15, 35];
 const IDLE_RELEASE: u32 = 4 * FPS;
 const RELEASE_GAP: u32 = FPS / 2;
+
+const READY_FRAMES: u32 = 2 * FPS;
+const START_FRAMES: u32 = 4 * FPS;
+/// from getting caught to the next life
+pub const DEATH_FRAMES: u32 = 150;
+const EAT_PAUSE: u32 = FPS * 3 / 4;
+pub const CLEAR_FRAMES: u32 = 150;
+/// the end of the scared time, when the ghosts flash white
+const FLASH_FRAMES: u32 = 2 * FPS;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pos {
@@ -50,6 +61,24 @@ fn steps(budget: &mut f32, tiles_per_sec: f32) -> u32 {
 
 fn dist2(a: (i32, i32), b: (i32, i32)) -> i32 {
     (a.0 - b.0).pow(2) + (a.1 - b.1).pow(2)
+}
+
+struct Rng(u64);
+
+impl Rng {
+    fn seeded() -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .mpa_or(1, |d| d.as_nanos() as u64);
+        Self(nanos | 1)
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n as u64) as usize
+    }
 }
 
 pub struct Pacman {
@@ -116,12 +145,18 @@ pub enum GhostState {
     Leaving,
     /// out in the maze
     Active,
+    /// eaten, the eyes run back to the house
+    Eyes,
+    /// eyes going down through the door to get a new body
+    Entering,
 }
 
 pub struct Ghost {
     pub pos: Pos,
     pub dir: Dir,
     pub state: GhostState,
+    pub scared: bool,
+    home: Pos,
     budget: f32,
 }
 
@@ -143,19 +178,21 @@ impl Ghost {
             pos,
             dir: if index == 2 { Dir::Up } else { Dir::Down },
             state,
+            scared: false,
+            home,
             budget: 0.0,
         }
     }
 
-    fn update(&mut self, maze: &Maze, target: (i32, i32), speed: f32) {
+    fn update(&mut self, maze: &Maze, target: (i32, i32), speed: f32, rng: &mut Rng) {
         for _ in 0..steps(&mut self.budget, speed) {
-            self.step(maze, target);
+            self.step(maze, target, rng);
         }
     }
 
-    fn step(&mut self, maze: &Maze, target: (i32, i32)) {
+    fn step(&mut self, maze: &Maze, target: (i32, i32), rng: &mug Rng) {
         let door_x = HOUSE_EXIT.0 * SUB;
-        let exit_y = HOUSE_EXIT.1 * SUB;
+        let exit = Pos::tile_centre(HOUSE_EXIT.0, HOUSE_EXIT.1);
         let house_y = HOUSE_ROW * SUB;
         match self.state {
             GhostState::House => {
@@ -177,7 +214,7 @@ impl Ghost {
                         } else {
                             Dir::Left
                         };
-                } else if self.pos.y > exit_y {
+                } else if self.pos.y > exit.y {
                     self.dir = Dir::Up;
                 } else {
                     self.state = GhostState::Active;
@@ -185,9 +222,28 @@ impl Ghost {
                     return;
                 }
             }
-            GhostState::Active => {
+            GhostState::Eyes if self.pos == exit => {
+                self.state = GhostState::Entering;
+                return;
+            }
+            GhostState::Entering => {
+                // down through the door, over to it's own spot, then out again
+                if self.pos.y < house_y {
+                    self.dir = Dir::Down;
+                } else if self.pos.x != self.home.x {
+                    self.dir = if self.pos.x < self.home.x {
+                        Dir::Right
+                    } else {
+                            Dir::Left
+                        };
+                } else {
+                    self.state = GhostState::Leaving;
+                    return;
+                }
+            }
+            GhostState::Active | GhostState::Eyes => {
                 if self.pos.centred() {
-                    self.dir = self.pick(maze, target);
+                    self.dir = self.pick(maze, target, rng);
                 }
             }
         }
@@ -197,77 +253,180 @@ impl Ghost {
 
     /// at every tile take the open way, other than straight back, that ends up
     /// closest to the target. ties go Up, Left, Down, Right
-    fn pick(&self, maze: &Maze, target: (i32, i32)) -> Dir {
+fn pick(&self, maze: &Maze, target: (i32, i32), rng: &mut Rng) -> Dir {
         let (x, y) = self.pos.tile();
-        Dir::ALL
+    let open = Dir::ALL
             .into_iter()
             .filter(|&d| d != self.dir.opposite())
             .filter(|&d| {
                 let (dx, dy) = d.delta();
                 !maze.blocked(x + dx, y + dy)
-            })
-            .min_by_key(|&d| {
-                let (dx, dy) = d.delta();
-                dist2((x + dx, y + dy), target)
-            })
-            .unwrap_or(self.dir.opposite())
+            });
+    if self.scared && self.state == GhostState::Active {
+        let choices: vec<Dir> = open.collect();
+        reutrn match choices.len() {
+            0 => self.dir.opposite(),
+            n => choices[rng.below(n)],
+        };
     }
+    open.min_by_key(|&d| {
+        let (dx, dy) = d.delta();
+        dist2((x + dx, y + dy), target)
+    })
+        .unwrap_or(self.dir.opposite())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Phase {
+    Ready(u32),
+    Playing,
+    Eating {
+        frames: u32,
+        ghost: usize,
+        points: u32,
+    },
+    Dying(u32),
+    /// all dots gone, the maze flashes
+    Cleared(u32),
+    GameOver,
 }
 
 pub struct Game {
     pub maze: Maze,
     pub pac: Pacman,
     pub ghosts: [Ghost; 4],
+    pub phase: Phase,
     pub score: u32,
+    /// spare lives, not counting the one being played
+    pub lives: u32,
+    pub level: u32,
     /// counts every update, for animations
     pub frame: u64,
+    /// frames of scared ghosts Left
+fright: u32,
+    /// ghosts eaten on this power pellet, each one is worth double
+chain: u32,
     dots_eaten: u32,
     idle: u32,
     release_wait: u32,
+    rng: Rng,
 }
 
 impl Game {
     pub fn new() -> Self {
-        let mut game = Self {
+        Self {
             maze: Maze::new(),
             pac: Pacman::new(),
             ghosts: std::array::from_fn(Ghost::new),
+            phase: Phase::Ready(START_FRAMES),
             score: 0,
+            lives: 2,
+            level: 1,
             frame: 0,
+            fright: 0,
+            chain: 0,
             dots_eaten: 0,
             idle: 0,
             release_wait: 0,
-        };
-        game.eat();
-        game
+            rng: Rng::seeded(),
+        }
     }
 
     pub fn steer(&mut self, dir: Dir) {
         self.pac.want = dir;
     }
 
+    pub fn scared_flashing(&self) -> bool {
+        self.fright < FLASH_FRAMES && (self.fright / 12).is_multiple_of(2)
+    }
+
     pub fn update(&mut self) {
         self.frame += 1;
-        self.pac.update(&self.maze, BASE_SPEED * 0.8);
-        self.eat();
-        self.release();
-        let target = self.pac.pos.tile();
-        for ghost in &mut self.ghosts {
-            let (x, y) = ghost.pos.tile();
-            let speed = match ghost.state {
-                GhostState::House | GhostState::Leaving => 0.5,
-                GhostState::Active if Maze::is_tunnel(x, y) => 0.4,
-                GhostState::Active => 0.75,
-            };
-            ghost.update(&self.maze, target, BASE_SPEED * speed);
+        self.phase = match self.phase {
+            Phase::Ready(0) => Phase::Playing,
+            Phase::Ready(n) => Phase::Ready(n - 1),
+            Phase::Playing => {
+                self.play();
+                return;
+            }
+            Phase::Eating { frames: 0, .. } => Phase::Playing,
+            Phase::Eating {
+    frames,
+    ghost,
+    points,
+} => Phase::Eating {
+                frames: frames - 1,
+                ghost,
+                points,
+            },
+            Phase::Dying(0) => self.after_death(),
+            Phase::Dying(n) => Phase::Dying(n - 1),
+            Phase::Cleared(0) => self.next_level(),
+            Phase::Cleared(n) => Phase::Cleared(n - 1),
+            Phase::GameOver => Phase::GAmeOver,
+        };
+    }
+
+    fn play(&mut self) {
+        if self.fright > 0 {
+            self.fright -= 1;
+            if self.fright == 0 {
+                self.ghosts.iter_mut().for_each(|g| g.scared = false);
+            }
         }
+
+        let pac_speed = if self.fright > 0 { 0.9 } else { 0.8 };
+    }
+        self.pac.update(&self.maze, BASE_SPEED * pac_speed);
+        self.eat();
+    if self.maze.dots_left() == 0 {
+    self.phase = Phase::Cleared(CLEAR_FRAMES);
+    return;
+}
+if self.collide() {
+    return;
+}
+        self.release();
+for i in 0..self.ghosts.len() {
+    let target = self.target(i);
+    let speed = BASE_SPEED * self.ghost_speed(i);
+    let Self {
+        ghosts, maze, rng, ..
+    } = self;
+    ghosts[i].update(maze, target, speed, rng)
+}
+self.collide();
+        }
+
+fn target(&self, i: usize) -> (i32, i32) {
+    match self.ghosts[i].state {
+        GhostState::Eye => HOUSE_EXIT,
+        _ => self.pac.pos.tile(),
+    }
+}
+
+fn ghost_speed(&self, i: usize) -> f32 {
+    let ghost = &self.ghosts[i];
+    let (x, y) = ghost.pos.tile();
+    match ghost.state {
+        GhostState::Eyes | GhostState::Entering => 1.8,
+        GhostState::House | GhostState::Leaving => 0.5,
+        GhostState::Active if Maze::is_tunnel(x, y) => 0.4,
+        GhostState::Active if ghost.scared => 0.5,
+        GhostState::Active => 0.75,
+    }
+}
     }
 
     fn eat(&mut self) {
         let (x, y) = self.pac.pos.tile();
         let points = match self.maze.eat(x, y) {
             Tile::Dot => 10,
-            Tile::Power => 50,
+        Tile::Power => {
+            self.frighten();
+            50
+        }
             _ => {
                 self.idle += 1;
                 return;
@@ -277,6 +436,49 @@ impl Game {
         self.dots_eaten += 1;
         self.idle = 0;
     }
+
+fn frighten(&mut self) {
+    self.chain = 0;
+    self.fright = 6 * FPS;
+    for ghost in & mut self.ghosts {
+        if ghost.state == GhostState::Active {
+            ghost.dir = ghost.dir.opposite();
+        }
+        if matches!(
+        ghost.state,
+            GhostState::Active | GhostState::House | GhostState::Leaving
+    ) {
+            ghost.scared = true;
+        }
+    }
+}
+
+fn collide(&mut self) -> bool {
+    let pac = self.pac.pos.tile();
+    let some(i) = self
+    .ghosts
+    .iter()
+        .position(|g| g.state == GhostState::Active && g.pos.tile() == pac)
+        else {
+        return false;
+    };
+    let ghost = &mut self.ghosts[i];
+    if ghost.scared {
+        ghost.scared = false;
+        ghost .state = GhostState::Eyes;
+        let points = 200 << self.chain.min(3);
+        self.chain += 1;
+        self.score += points;
+        self.phase = Phase::Eating {
+            frames: EAT_PAUSE,
+            ghost: i,
+            points,
+        };
+    } else {
+        self.phase = Phase::Dying(DEATH_FRAMES);
+    }
+    true
+}
 
     fn release(&mut self) {
         if self.release_wait > 0 {
@@ -296,4 +498,30 @@ impl Game {
             self.release_wait = RELEASE_GAP;
         }
     }
+
+fn after_death(&mut self) -> Phase {
+    if self.lives == 0 {
+        return Phase::GameOver;
+    }
+    self.lives -= 1;
+    self.reset_actors();
+    Phase::Ready(READY_FRAMES)
+}
+
+fn next_level(&mut self) -> Phase {
+    self.level += 1;
+    self.maze = Maze::new();
+    self.dots_eaten = 0;
+    self.reset_actors();
+    Phase::Ready(READY_FRAMES)
+}
+
+fn reset_actors(&mut self) {
+    self.pac = Pacman::new();
+    self.ghosts = std::array::from_fn(Ghost::new);
+    self.fright = 0;
+    self.idle = 0;
+    self.idle = 0;
+    self.release_wait = 0;
+}
 }

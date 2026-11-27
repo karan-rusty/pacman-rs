@@ -28,6 +28,7 @@ pub const PAC_START: (i32, i32) = (12, 16);
 pub const HOUSE_EXIT: (i32, i32) = (12, 8);
 pub const HOUSE_ROW: i32 = 10;
 pub const TUNNEL_ROW: i32 = 10;
+pub const MESSAGE_ROW: i32 = 12;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dir {
@@ -71,6 +72,7 @@ pub enum Tile {
 #[derive(Clone)]
 pub struct Maze {
     tiles: Vec<Tile>,
+    dots: usize,
 }
 
 impl Maze {
@@ -86,7 +88,11 @@ impl Maze {
                 _ => Tile::Empty,
             })
             .collect();
-        Self { tiles }
+        let dots = tiles
+        .iter()
+            .filter(|t| matches!(t, Tile::Dot | Tile::Power))
+            .count();
+        Self { tiles, dots}
     }
 
     pub fn get(&self, x: i32, y: i32) -> Tile {
@@ -108,8 +114,13 @@ impl Maze {
         let tile = self.get(x ,y);
         if matches!(tile, Tile::Dot | Tile::Power) {
             self.tiles[(y * WIDTH + x.rem_euclid(WIDTH)) as usize] = Tile::Empty;
+            self.dots -= 1;
         }
         tile
+    }
+
+    pub fn dots_left(&self) -> usize {
+        self.dots
     }
 }
 
