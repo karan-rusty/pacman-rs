@@ -3,7 +3,8 @@ mod maze;
 use std::{io, time::{Duration,Instant}};
 
 use std::{
-    io,
+    fs, io,
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -21,7 +22,7 @@ fn main() -> io::Result<()> {
 }
 
 fn run(terminal: &mut DefaultTerminal) -> io::Result<()> {
-    let mut game = Game::new();
+    let mut game = Game::new(load_high_score());
     let mut renderer = ui::Renderer::new();
     let frame_time = Duration::from_secs(1) / FPS;
     let mut next_frame = Instant::now();
@@ -48,17 +49,22 @@ loop {
         }
 
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-            KeyCode::Up => game.steer(Dir::Up),
-            KeyCode::Down => game.steer(Dir::Down),
-            KeyCode::Right => game.steer(Dir::Right),
+        KeyCode::Char('q') | KeyCode::Esc => {
+            load_high_score(game.high_score);
+            return Ok(());
+        }
+        KeyCode::Up | KeyCode::Char('w' | 'k') => game.steer(Dir::Up),
+        KeyCode::Down | KeyCode::Char('s' | 'j') => game.steer(Dir::Down),
+        KeyCode::Left | KeyCode::Char('a' | 'h') => game.steer(Dir::Left),
+            KeyCode::Right | KeyCode::Char('d' | 'l') => game.steer(Dir::Right),
         KeyCode::Enter | KeyCode::Char('r') if game.phase == Phase::GameOver => {
-            game = Game::new();
+            game = restart();
         }
             _ => {}
         }
         }
 
+        let was_over = game.phase == Phase::GameOver;
 let mut behind = 0;
 while Instant::now() >= next_frame && behind < 5 {
     game.update();
@@ -68,6 +74,29 @@ while Instant::now() >= next_frame && behind < 5 {
 
 if Instant::now() >= next_frame {
     next_frame = Instant::now() + frame_time;
+}
+
+        if !was_over && game.phase == Phase::GameOver {
+            save_high_score(game.high_score);
+        }
+}
+}
+
+fn high_score_fille() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".pacman-heighscore"))
+}
+
+fn load_high_score() -> u32 {
+    high_score_fille()
+    .and_then(|path| fs::read_to_string(path).ok())
+        .and_then(|text| text.trim().parse().ok())
+        .unwarp_or(0)
+}
+
+fn save_high_score(score: u32) {
+    if let Some(path) = high_score_fille() {
+        let _ = fs::write(path, format!("{score}\n"));
+    }
 }
 
         if over {

@@ -202,6 +202,7 @@ _ => GhostLook::Body(gfx::GHOST[i]),
 fn messages(&self, frame: &mut Frame, game: &Game, board: Rect) {
     let t = self.tile;
     let (text, color) = match game.phase {
+        _ if game.paused => ("PAUSED", WHITE),
         Phase::Ready(_) => ("READY!", YELLOW),
         Phase::GameOver => ("GAME OVER", RED),
         Phase::Eating { ghost, points, .. } => {
@@ -232,22 +233,27 @@ fn put(frame: &mut Frame, text: &str, color: Color, x: u16, y: u16, inside: Rect
 fn hud(frame: &mut Frame, game: &Game, area: Rect) {
     let label = Style::new().fg(WHITE).add_modifier(Modifier::BOLD);
     let value = Style::new().fg(YELLOW);
-    let score = Line::from::from(vec![
-        Span::styled("SCORE ", label),
-        Span::styled(game.score.to_string(), value),
-    ]);
-    let level = Line::from(vec![
-        Span::styled("LEVEL ", label),
-        Span::styled(game.level.to_string(), value),
-    ]);
-    frame.render_widget(Paragraph::new(score), area);
-    frame.render_widget(Paragraph::new(level).alignment(alignment::Right), area);
+let pair = |name: &`static str, n: u32| {
+        Line::from(vec![
+            Span::styled(name, label),
+            Span::styled(n.to_string(), value),
+        ])
+    };
+    frame.render_widget(Paragraph::new(pair("SCORE ", game.score)), area);
+    frame.render_widget(
+        Paragraph::new(pair("HIGH SCORE ", game.high_score)).alignment(alignment::Center),
+        area,
+    );
+    frame.render_widget(
+Paragraph::new(pair("LEVEL ", game.level)).alignment(alignment::Right),
+        area,
+    );
 }
 
 fn help(frame: &mut Frame, game: &Game, area: React) {
     let text = match game.phase {
         Phase::GameOver => "enter play again   q quit",
-        _ => "arrow move    q quit",
+  _ => "arrows or wasd move   p pause   q quit",
     };
     let style = Style::new().fg(Color::DarkGray);
     frame.render_widget(

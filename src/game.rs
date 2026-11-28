@@ -27,6 +27,8 @@ const EAT_PAUSE: u32 = FPS * 3 / 4;
 pub const CLEAR_FRAMES: u32 = 150;
 /// the end of the scared time, when the ghosts flash white
 const FLASH_FRAMES: u32 = 2 * FPS;
+/// one extra life when the score gets here
+const EXTRA_LIFE: u32 = 10_000;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pos {
@@ -306,9 +308,11 @@ pub struct Game {
     pub ghosts: [Ghost; 4],
     pub phase: Phase,
     pub score: u32,
+    pub high_score: u32,
     /// spare lives, not counting the one being played
     pub lives: u32,
     pub level: u32,
+    pub paused: bool,
     /// counts every update, for animations
     pub frame: u64,
     /// index into MODES, part the end means chase forever
@@ -321,19 +325,23 @@ chain: u32,
     dots_eaten: u32,
     idle: u32,
     release_wait: u32,
+    /// the extra life is a one time thing
+    bonus_life: bool,
     rng: Rng,
 }
 
 impl Game {
-    pub fn new() -> Self {
+    pub fn new(high_score: u32) -> Self {
         Self {
             maze: Maze::new(),
             pac: Pacman::new(),
             ghosts: std::array::from_fn(Ghost::new),
             phase: Phase::Ready(START_FRAMES),
             score: 0,
+            high_score,
             lives: 2,
             level: 1,
+            paused: false,
             frame: 0,
             mode: 0,
             mode_frames: 0,
@@ -342,7 +350,18 @@ impl Game {
             dots_eaten: 0,
             idle: 0,
             release_wait: 0,
+            bonus_life: false,
             rng: Rng::seeded(),
+        }
+    }
+
+    pub fn restart(&mut self) {
+        *self = Game::new(self.high_score);
+    }
+
+    pub fn toggle_paused(&mut self) {
+        if self.phase != Phase::GameOver {
+            self.paused = !self.paused;
         }
     }
 
@@ -355,6 +374,9 @@ impl Game {
     }
 
     pub fn update(&mut self) {
+        if self.paused {
+            return;
+        }
         self.frame += 1;
         self.phase = match self.phase {
             Phase::Ready(0) => Phase::Playing,
@@ -508,7 +530,7 @@ fn ghost_speed(&self, i: usize) -> f32 {
                 return;
             }
         };
-        self.score += points;
+self.add_score(points);
         self.dots_eaten += 1;
         self.idle = 0;
     }
@@ -546,7 +568,7 @@ fn collide(&mut self) -> bool {
         ghost .state = GhostState::Eyes;
         let points = 200 << self.chain.min(3);
         self.chain += 1;
-        self.score += points;
+self.add_score(points);
         self.phase = Phase::Eating {
             frames: EAT_PAUSE,
             ghost: i,
@@ -576,6 +598,15 @@ if self.dots_eaten >= needed || self.idle >= IDLE_RELEASE {
             self.release_wait = RELEASE_GAP;
         }
     }
+
+fn add_score(&mut self, points: u32) {
+self.score += points;
+if !self.bonus_life && self.score >= EXTRA_LIFE {
+    self.bonus_life = true;
+self.lives += 1;
+}
+self.high_score = self.high_score.max(self.score);
+}
 
 fn after_death(&mut self) -> Phase {
     if self.lives == 0 {
