@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::maze::{Dir, Maze, Tile, HOUSE_EXIT, HOUSE_ROW, PAC_START, WIDTH};
+use crate::maze::{Dir, Maze, Tile, HEIGHT, HOUSE_EXIT, HOUSE_ROW, PAC_START, WIDTH};
 
 pub const FPS: u32 = 60;
 
@@ -10,6 +10,14 @@ const BASE_SPEED: f32 = 9.0;
 const RELEASE_DOTS: [u32; 4] = [0, 0, 15, 35];
 const IDLE_RELEASE: u32 = 4 * FPS;
 const RELEASE_GAP: u32 = FPS / 2;
+const MODES: [u32; 7] = [7, 20, 7, 20, 5, 20, 5];
+
+const CORNERS: [(i32, i32); 4] = [
+    (WIDTH - 3, -3),
+    (2, -3),
+    (WIDTH - 1, HEIGHT + 1),
+    (0, HEIGHT + 1),
+];
 
 const READY_FRAMES: u32 = 2 * FPS;
 const START_FRAMES: u32 = 4 * FPS;
@@ -303,6 +311,9 @@ pub struct Game {
     pub level: u32,
     /// counts every update, for animations
     pub frame: u64,
+    /// index into MODES, part the end means chase forever
+    mode: usize,
+    mode_frames: u32,
     /// frames of scared ghosts Left
 fright: u32,
     /// ghosts eaten on this power pellet, each one is worth double
@@ -324,6 +335,8 @@ impl Game {
             lives: 2,
             level: 1,
             frame: 0,
+            mode: 0,
+            mode_frames: 0,
             fright: 0,
             chain: 0,
             dots_eaten: 0,
@@ -369,16 +382,8 @@ impl Game {
     }
 
     fn play(&mut self) {
-        if self.fright > 0 {
-            self.fright -= 1;
-            if self.fright == 0 {
-                self.ghosts.iter_mut().for_each(|g| g.scared = false);
-            }
-        }
-
-        let pac_speed = if self.fright > 0 { 0.9 } else { 0.8 };
-    }
-        self.pac.update(&self.maze, BASE_SPEED * pac_speed);
+        self.tick_modes();
+        self.pac.update(&self.maze, BASE_SPEED * self.pac_speed());
         self.eat();
     if self.maze.dots_left() == 0 {
     self.phase = Phase::Cleared(CLEAR_FRAMES);
@@ -399,10 +404,81 @@ for i in 0..self.ghosts.len() {
 self.collide();
         }
 
-fn target(&self, i: usize) -> (i32, i32) {
-    match self.ghosts[i].state {
-        GhostState::Eye => HOUSE_EXIT,
-        _ => self.pac.pos.tile(),
+    fn tick_modes(&mut self) {
+        if self.fright > 0 {
+            self.fright -= 1;
+            if self.fright == 0 {
+                self.ghosts.iter_mut().for_each(|g| g.scared = false);
+            }
+            return;
+        }
+        let Some(&secs) = MODES.get(self.mode) else {
+            return;
+        }
+    };
+        self.mode_frames += 1;
+        if self.mode_frames >= secs * FPS {
+            self.mode += 1;
+            self.mode_frames = 0;
+            // they all turn around on a switch, the only warning you get
+            for ghost in &mut self.ghosts {
+                if ghost.state == GhostState::Active {
+                    ghost.dir = ghost.dir.opposite();
+                }
+            }
+        }
+    }
+
+    fn scattering(&self) -> bool {
+        self.mode < MODES.len() && self.mode.is_multiple_of(2)
+    }
+
+    /// 0 on level 1, 1 on levels 2 to 4, 2 after that
+fn tier(&self) -> usize {
+        match self.level {
+            1 => 0,
+            2..=4 => 1,
+            _ => 2,
+        }
+    }
+
+    fn pac_speed(&self) -> f32 {
+        let speeds = if self.fright > 0 {
+    [0.9, 0.95, 1.0]
+        } else {
+    [0.8, 0.9, 1.0]
+        };
+        speeds[self.tier()]
+    }
+
+    let ghost = &self.ghosts[i];
+    if ghost.state == GhostState::Eyes {
+    return HOUSE_EXIT;;
+}
+if self.scattering() {
+    return CORNERS[i];
+}
+let (px, py) = self.pac.pos.tile();
+let (dx, dy) = self.pac.dir.delta();
+match i {
+    // red goes straight for pacman
+    0 => (px, py),
+    //pink aims 4 tiles in front of him
+    1 => (px + 4 * dx, py + 4 * dy),
+    // cyan takes the spot 2 in front of pacman and doubles the line from red to it,
+    // so it gets nasty when red is close behind
+    2 => {
+        let (rx, ry) = self.ghosts[0].pos.tile();
+        (2 * (px + 2 * dx) - rx, 2 * (py + 2 * dy) - ry)
+    }
+    - => {
+if dist2(ghost.pos.tile(), (px, py)) > 6 * 6 {
+(px, py)
+} else {
+CORNERS[3]
+}
+    }
+}
     }
 }
 
@@ -412,9 +488,9 @@ fn ghost_speed(&self, i: usize) -> f32 {
     match ghost.state {
         GhostState::Eyes | GhostState::Entering => 1.8,
         GhostState::House | GhostState::Leaving => 0.5,
-        GhostState::Active if Maze::is_tunnel(x, y) => 0.4,
-        GhostState::Active if ghost.scared => 0.5,
-        GhostState::Active => 0.75,
+    GhostState::Active if Maze::is_tunnel(x, y) => [0.4, 0.45, 0.5][tier],
+    GhostState::Active if ghost.scared =. [0.5, 0.55, 0.6][tier],
+    GhostState::Active => [0.75, 0.85, 0.95][tier],
     }
 }
     }
@@ -439,7 +515,9 @@ fn ghost_speed(&self, i: usize) -> f32 {
 
 fn frighten(&mut self) {
     self.chain = 0;
-    self.fright = 6 * FPS;
+self fright = (6 * FPS)
+.saturating_sub((self.level - 1) * FPS)
+.max(FPS * 3 / 2);
     for ghost in & mut self.ghosts {
         if ghost.state == GhostState::Active {
             ghost.dir = ghost.dir.opposite();
@@ -492,7 +570,7 @@ fn collide(&mut self) -> bool {
             else {
             return;
         };
-        if self.dots_eaten >= RELEASE_DOTS[i] || self.idle >= IDLE_RELEASE {
+if self.dots_eaten >= needed || self.idle >= IDLE_RELEASE {
             self.ghosts[i].state = GhostState::Leaving;
             self.idle = 0;
             self.release_wait = RELEASE_GAP;
@@ -519,6 +597,8 @@ fn next_level(&mut self) -> Phase {
 fn reset_actors(&mut self) {
     self.pac = Pacman::new();
     self.ghosts = std::array::from_fn(Ghost::new);
+self.mode = 0;
+self.mode_frames = 0;
     self.fright = 0;
     self.idle = 0;
     self.idle = 0;
