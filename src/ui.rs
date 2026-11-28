@@ -3,7 +3,7 @@ use crate::gfx::{self, Canvas, GhostLook};
 use crate::maze::{Dir, Maze, Tile, HEIGHT, MESSAGE_ROW, WIDTH};
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Modifer, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
@@ -31,7 +31,7 @@ impl Renderer {
         Self {
             tile: 0,
             walls: Canvas::new(0, 0),
-            walls_flash: Canvas::new(0, 0);
+            walls_flash: Canvas::new(0, 0),
             canvas: Canvas::new(0, 0),
         }
     }
@@ -58,17 +58,11 @@ impl Renderer {
         let rows = board_rows(t) as u16;
         let left = area.x + (area.width - width) / 2;
         let top = area.y + (area.height - rows - 2) / 2;
-        frame.render_widget(&self.canvas, Rect::new(left, top + 1, width, rows));
-        frame.render_widget(
-            Paragraph::new(format!("SCORE {}", game.score)),
-            Rect::new(left, top, width, 1),
-        );
-        frame.render_widget(
-            Paragraph::new("arrows move   q quit")
-                .style(Style::new().fg(Color::DarkGray))
-                .alignment(Alignment::Center),
-            Rect::new(left, top + 1 + rows, width, 1),
-        );
+        let board = Rect::new(left, top + 1, width, rows);
+        frame.render_widget(&self.canvas, board);
+        hud(frame, game, Rect::new(left, top, width, 1));
+        self.messages(frame, game, board);
+        help(frame, game, Rect::new(left, top + 1 + rows, width, 1));
     }
 
     fn resize(&mut self, t: i32) {
@@ -87,7 +81,7 @@ impl Renderer {
             HEIGHT,
             t,
             is_wall,
-            gfx::Wall,
+            gfx::WALL,
             gfx::WALL_FILL,
         );
     gfx::draw_walls(
@@ -113,9 +107,9 @@ impl Renderer {
 
     fn paint(&mut self, game: &Game) {
         let t = self.tile;
-    let flash = matches!(game.phase, Phase::Cleared(n))
+    let flash = matches!(game.phase, Phase::Cleared(n)
 if n < CLEAR_FRAMES - CLEAR_HOLD && (n / 12).is_multiple_of(2));
-    self.canas.copy_from(if flash {
+    self.canvas.copy_from(if flash {
         &self.walls_flash
     } else {
             &self.walls
@@ -148,11 +142,11 @@ if n < CLEAR_FRAMES - CLEAR_HOLD && (n / 12).is_multiple_of(2));
     let r = tf * 0.8;
         let pac = &game.pac;
     let mouth = match game.phase {
-        Phase::Playing => Some(pac.mouth() * 0.22);
-    Phase::Ready(_) | Phase::Cleared(_) => Some(0.0);
+        Phase::Playing => Some(pac.mouth() * 0.22),
+    Phase::Ready(_) | Phase::Cleared(_) => Some(0.0),
     Phase::Dying(n) => {
         let since = DEATH_FRAMES - n;
-        if since < DEATH_FRAMES {
+        if since < DEATH_FREEZE {
             Some(0.0)
         } else {
             let fold = (since - DEATH_FREEZE) as f32 / (DEATH_FRAMES - DEATH_FREEZE - 20) as f32;
@@ -188,9 +182,10 @@ if n < CLEAR_FRAMES - CLEAR_HOLD && (n / 12).is_multiple_of(2));
         }
         let look = match ghost.state {
             GhostState::Eyes | GhostState::Entering => GhostLook::Eyes,
-            _ if ghost.scared_flashing(),
-        },
-_ => GhostLook::Body(gfx::GHOST[i]),
+            _ if ghost.scared => GhostLook::Scared {
+                flash: game.scared_flashing(),
+            },
+            _ => GhostLook::Body(gfx::GHOSTS[i]),
     };
             let (x, y) = to_pixels(ghost.pos, t);
             for x in wrapped(x, t) {
@@ -233,7 +228,7 @@ fn put(frame: &mut Frame, text: &str, color: Color, x: u16, y: u16, inside: Rect
 fn hud(frame: &mut Frame, game: &Game, area: Rect) {
     let label = Style::new().fg(WHITE).add_modifier(Modifier::BOLD);
     let value = Style::new().fg(YELLOW);
-let pair = |name: &`static str, n: u32| {
+let pair = |name: &'static str, n: u32| {
         Line::from(vec![
             Span::styled(name, label),
             Span::styled(n.to_string(), value),
@@ -241,16 +236,16 @@ let pair = |name: &`static str, n: u32| {
     };
     frame.render_widget(Paragraph::new(pair("SCORE ", game.score)), area);
     frame.render_widget(
-        Paragraph::new(pair("HIGH SCORE ", game.high_score)).alignment(alignment::Center),
+        Paragraph::new(pair("HIGH SCORE ", game.high_score)).alignment(Alignment::Center),
         area,
     );
     frame.render_widget(
-Paragraph::new(pair("LEVEL ", game.level)).alignment(alignment::Right),
+Paragraph::new(pair("LEVEL ", game.level)).alignment(Alignment::Right),
         area,
     );
 }
 
-fn help(frame: &mut Frame, game: &Game, area: React) {
+fn help(frame: &mut Frame, game: &Game, area: Rect) {
     let text = match game.phase {
         Phase::GameOver => "enter play again   q quit",
   _ => "arrows or wasd move   p pause   q quit",
@@ -259,16 +254,16 @@ fn help(frame: &mut Frame, game: &Game, area: React) {
     frame.render_widget(
         Paragraph::new(text)
         .style(style)
-            .alignment(alignment::Center),
+            .alignment(Alignment::Center),
         area,
     );
 }
 
 fn board_rows(t: i32) -> i32 {
-    (HEIGHT + FOOTER * t + 1) / 2
+    ((HEIGHT + FOOTER) * t + 1) / 2
 }
 
-fn fits(t: i32, area: React) -> bool {
+fn fits(t: i32, area: Rect) -> bool {
     WIDTH * t <= area.width as i32 && board_rows(t) + 2 <= area.height as i32
 }
 

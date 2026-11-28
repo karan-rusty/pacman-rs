@@ -79,13 +79,13 @@ impl Rng {
     fn seeded() -> Self {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .mpa_or(1, |d| d.as_nanos() as u64);
+            .map_or(1, |d| d.as_nanos() as u64);
         Self(nanos | 1)
     }
 
     fn below(&mut self, n: usize) -> usize {
         self.0 ^= self.0 << 13;
-        self.0 ^= self >> 7;
+        self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         (self.0 % n as u64) as usize
     }
@@ -200,7 +200,7 @@ impl Ghost {
         }
     }
 
-    fn step(&mut self, maze: &Maze, target: (i32, i32), rng: &mug Rng) {
+    fn step(&mut self, maze: &Maze, target: (i32, i32), rng: &mut Rng) {
         let door_x = HOUSE_EXIT.0 * SUB;
         let exit = Pos::tile_centre(HOUSE_EXIT.0, HOUSE_EXIT.1);
         let house_y = HOUSE_ROW * SUB;
@@ -259,7 +259,6 @@ impl Ghost {
         }
         self.pos.step(self.dir);
     }
-    }
 
     /// at every tile take the open way, other than straight back, that ends up
     /// closest to the target. ties go Up, Left, Down, Right
@@ -273,8 +272,8 @@ fn pick(&self, maze: &Maze, target: (i32, i32), rng: &mut Rng) -> Dir {
                 !maze.blocked(x + dx, y + dy)
             });
     if self.scared && self.state == GhostState::Active {
-        let choices: vec<Dir> = open.collect();
-        reutrn match choices.len() {
+        let choices: Vec<Dir> = open.collect();
+        return match choices.len() {
             0 => self.dir.opposite(),
             n => choices[rng.below(n)],
         };
@@ -399,7 +398,7 @@ impl Game {
             Phase::Dying(n) => Phase::Dying(n - 1),
             Phase::Cleared(0) => self.next_level(),
             Phase::Cleared(n) => Phase::Cleared(n - 1),
-            Phase::GameOver => Phase::GAmeOver,
+            Phase::GameOver => Phase::GameOver,
         };
     }
 
@@ -436,8 +435,7 @@ self.collide();
         }
         let Some(&secs) = MODES.get(self.mode) else {
             return;
-        }
-    };
+        };
         self.mode_frames += 1;
         if self.mode_frames >= secs * FPS {
             self.mode += 1;
@@ -473,9 +471,10 @@ fn tier(&self) -> usize {
         speeds[self.tier()]
     }
 
+    fn target(&self, i: usize) -> (i32, i32) {
     let ghost = &self.ghosts[i];
     if ghost.state == GhostState::Eyes {
-    return HOUSE_EXIT;;
+    return HOUSE_EXIT;
 }
 if self.scattering() {
     return CORNERS[i];
@@ -493,7 +492,7 @@ match i {
         let (rx, ry) = self.ghosts[0].pos.tile();
         (2 * (px + 2 * dx) - rx, 2 * (py + 2 * dy) - ry)
     }
-    - => {
+    _ => {
 if dist2(ghost.pos.tile(), (px, py)) > 6 * 6 {
 (px, py)
 } else {
@@ -502,20 +501,19 @@ CORNERS[3]
     }
 }
     }
-}
 
 fn ghost_speed(&self, i: usize) -> f32 {
     let ghost = &self.ghosts[i];
+    let tier = self.tier();
     let (x, y) = ghost.pos.tile();
     match ghost.state {
         GhostState::Eyes | GhostState::Entering => 1.8,
         GhostState::House | GhostState::Leaving => 0.5,
     GhostState::Active if Maze::is_tunnel(x, y) => [0.4, 0.45, 0.5][tier],
-    GhostState::Active if ghost.scared =. [0.5, 0.55, 0.6][tier],
+    GhostState::Active if ghost.scared => [0.5, 0.55, 0.6][tier],
     GhostState::Active => [0.75, 0.85, 0.95][tier],
     }
 }
-    }
 
     fn eat(&mut self) {
         let (x, y) = self.pac.pos.tile();
@@ -537,7 +535,7 @@ self.add_score(points);
 
 fn frighten(&mut self) {
     self.chain = 0;
-self fright = (6 * FPS)
+self.fright = (6 * FPS)
 .saturating_sub((self.level - 1) * FPS)
 .max(FPS * 3 / 2);
     for ghost in & mut self.ghosts {
@@ -555,7 +553,7 @@ self fright = (6 * FPS)
 
 fn collide(&mut self) -> bool {
     let pac = self.pac.pos.tile();
-    let some(i) = self
+    let Some(i) = self
     .ghosts
     .iter()
         .position(|g| g.state == GhostState::Active && g.pos.tile() == pac)
@@ -592,6 +590,7 @@ self.add_score(points);
             else {
             return;
         };
+        let needed = RELEASE_DOTS[i];
 if self.dots_eaten >= needed || self.idle >= IDLE_RELEASE {
             self.ghosts[i].state = GhostState::Leaving;
             self.idle = 0;

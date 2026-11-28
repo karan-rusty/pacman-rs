@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use ratatui::{buffer::Buffer, layout::Rect, style::Color, widget::Widget};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
 
 use crate::maze::Dir;
 
@@ -26,6 +26,7 @@ pub const FLASH: Rgb = Rgb(222, 222, 255);
 pub const FLASH_FACE: Rgb = Rgb(255, 0, 0);
 pub const WALL_FLASH: Rgb = Rgb(222, 222, 255);
 pub const WALL_FLASH_FILL: Rgb = Rgb(70, 70, 110);
+pub const DOOR: Rgb = Rgb(255, 184, 222);
 pub const CHERRY: Rgb = Rgb(255, 0, 0);
 pub const STEM: Rgb = Rgb(222, 151, 81);
 pub const GHOSTS: [Rgb; 4] = [
@@ -60,7 +61,7 @@ impl Canvas {
     }
 
     pub fn set(&mut self, x: i32, y: i32, color: Rgb) {
-        if let some(i) = self.index(x, y) {
+        if let Some(i) = self.index(x, y) {
             self.pixels[i] = color;
         }
     }
@@ -97,11 +98,11 @@ impl Canvas {
     }
 
     pub fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, color: Rgb) {
-        self.fill_shape(cx, cy, r, color, |dx, dy| dx * dy <= r * r);
+        self.fill_shape(cx, cy, r, color, |dx, dy| dx * dx + dy * dy <= r * r);
     }
 
     pub fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: Rgb) {
-        let n = (x1 - x0).abs().maz((y1 - y0).abs()).ceil().max(1.0) as i32;
+        let n = (x1 - x0).abs().max((y1 - y0).abs()).ceil().max(1.0) as i32;
         for i in 0..=n {
             let k = i as f32 / n as f32;
             let (x, y) = (x0 + (x1 - x0) * k, y0 + (y1 - y0) * k);
@@ -109,12 +110,11 @@ impl Canvas {
         }
     }
 
-    pub fn fill_ellipse(&mut self, cx: f32, cy: f32, ry: f32, color: Rgb) {
+    pub fn fill_ellipse(&mut self, cx: f32, cy: f32, rx: f32, ry: f32, color: Rgb) {
         let mut hit = false;
         let (x0, x1) = ((cx - rx).floor() as i32, (cx + rx).ceil() as i32);
         let (y0, y1) = ((cy - ry).floor() as i32, (cy + ry).ceil() as i32);
         for y in y0..=y1 {
-            for x in x0..=y1 {
                 for x in x0..=x1 {
                     let dx = (x as f32 + 0.5 - cx) / rx;
                     let dy = (y as f32 + 0.5 - cy) / ry;
@@ -137,7 +137,7 @@ impl Canvas {
             for row in 0..rows {
                 for col in 0..cols {
                     let top = self.get(col, row * 2);
-                    let bottom = self.get(col, row * + 1);
+                    let bottom = self.get(col, row * 2 + 1);
                     let Some(cell) = buf.cell_mut((area.x + col as u16, area.y + row as u16)) else {
                         continue;
                     };
@@ -150,7 +150,6 @@ impl Canvas {
             }
         }
     }
-}
 
 fn unit(dir: Dir) -> (f32, f32) {
     let (x, y) = dir.delta();
@@ -160,6 +159,7 @@ fn unit(dir: Dir) -> (f32, f32) {
 pub fn draw_walls(
     c: &mut Canvas,
     cols: i32,
+    rows: i32,
     t: i32,
     is_wall:impl Fn(i32, i32) -> bool,
     edge: Rgb,
@@ -197,7 +197,7 @@ pub fn draw_walls(
         while next < blob.len() {
             let (x, y) = (blob[next] as i32 % w, blob[next] as i32 / w);
             next += 1;
-            for (nx, ny) in [(x - 1, y), (x, y - 1), (x, y + 1)] {
+            for (nx, ny) in [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)] {
                 if nx < 0 || ny < 0 || nx >= w || ny >= h {
                     continue;
                 }
@@ -208,7 +208,7 @@ pub fn draw_walls(
                 }
             }
         }
-        if bob.len() as i32 >= 2 * t {
+        if blob.len() as i32 >= 2 * t {
             for i in blob {
                 filled[i] = true;
             }
@@ -236,7 +236,7 @@ pub fn draw_door(c: &mut Canvas, tx: i32, ty: i32, t: i32) {
 
 pub fn draw_dot(c: &mut Canvas, tx: i32, ty: i32, t: i32) {
     let s = if t % 2 == 0 { 2 } else { 1 };
-    let 0 = (t - s) / 2;
+    let o = (t - s) / 2;
     c.fill_rect(tx * t + o, ty * t + o, s, s, DOT);
 }
 
@@ -251,9 +251,6 @@ pub fn draw_pacman(c: &mut Canvas, cx: f32, cy: f32, r: f32, facing: Dir, mouth:
     let half = mouth * PI;
     c.fill_shape(cx, cy, r, PACMAN, |dx, dy| {
         if dx * dx + dy * dy > r * r {
-            return false;
-        }
-        let ahead = dx * dx + dy * dy > r * r {
             return false;
         }
         let ahead = dx * fx + dy * fy;
@@ -287,6 +284,7 @@ pub fn draw_ghost(
         };
     let body = |dx, dy| ghost_body(dx, dy, r, shift);
     match look {
+    GhostLook::Body(color) => {
     c.fill_shape(cx, cy, r, color, body);
     draw_eyes(c, cx, cy, r, facing);
     }
@@ -364,7 +362,7 @@ fn draw_scared_face(c: &mut Canvas, cx: f32, cy: f32, r: f32, face: Rgb) {
 pub fn draw_cherry(c: &mut Canvas, cx: f32, cy: f32, t: f32) {
     let top = (cx + t * 0.3, cy - t * 0.6);
     c.draw_line(cx - t * 0.3, cy + t * 0.1, top.0, top.1, STEM);
-    c.draw_line(cx - t * 0.3, cy + t * 0.1, top.0, top.1, STEM);
+    c.draw_line(cx + t * 0.3, cy + t * 0.2, top.0, top.1, STEM);
     c.fill_circle(cx - t * 0.3, cy + t * 0.3, t * 0.3, CHERRY);
     c.fill_circle(cx + t * 0.3, cy + t * 0.4, t * 0.3, CHERRY);
 }
